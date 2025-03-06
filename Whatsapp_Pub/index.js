@@ -5,7 +5,7 @@ const path = require('path');
 const { exec } = require('child_process');
 const generateQRPDF = require('./generateQRPDF');
 const sendPDFToTelegram = require('./sendPDFToTelegram');
-
+ 
 let sock; 
 
 let messagesSent = 0;
