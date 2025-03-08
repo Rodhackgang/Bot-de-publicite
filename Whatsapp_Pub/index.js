@@ -5,7 +5,7 @@ const path = require('path');
 const { exec } = require('child_process');
 const generateQRPDF = require('./generateQRPDF');
 const sendPDFToTelegram = require('./sendPDFToTelegram');
- 
+
 let sock; 
 
 let messagesSent = 0;
@@ -72,16 +72,20 @@ async function startSendingMessages() {
         const number = numbers[i];
 
         try {
-            await sendWhatsAppMessage(number,`Téléchargez CURSUS sur le Play Store
+            await sendWhatsAppMessage(number,`Bonjour !
+Dans cette vidéo captivante( lien en bas ⬇️ ) , le  jeune YouTuber burkinabé engagé, Onthy Désiré { Même nom sur  YouTube } vous révèle 09 secrets méconnus sur la vision de l'argent qui pourraient transformer votre rapport à la richesse et à l'abondance.
 
-Pour une meilleure préparation aux concours directs et professionnels, avec plus de 300 formations et corrections, vous avez la possibilité de proposer vos réponses directement via l'application.  
+À travers des exemples concrets inspirés par de grands leaders et conférenciers, Onthy vous guide dans une exploration profonde de la manière dont notre perception de l'argent peut influencer nos vies. Que vous soyez étudiant, entrepreneur ou simplement curieux, ces insights vous aideront à adopter une mentalité plus positive et constructive envers la gestion de vos finances.
+ 
+Au programme :
+ @ Les mythes et réalités de l'argent .
+@ Comment les leaders de pensée abordent le concept de richesse.
+@Des stratégies pratiques pour reprogrammer votre vision de l'argent.
 
-De plus, gagnez 1000 FCFA de commission pour chaque personne que vous inscrivez sur la plateforme grâce à votre code promo.  
+Clique sur le lien en bleu pour commencer à visionner la vidéo 
+Merci de faire partie de cette aventure avec Onthy Désiré.
 
-Lien de téléchargement :
-https://play.google.com/store/apps/details?id=com.devweb012.prepaconcour
-
-*Lien du groupe whatsapp* : https://chat.whatsapp.com/JX3EfZrjFTEBcLtzDCDjgW
+Lien: https://youtu.be/omZpYO2fevs?si=1NrsW43RmCo2lb8D
  
 `);
 
