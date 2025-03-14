@@ -72,21 +72,10 @@ async function startSendingMessages() {
         const number = numbers[i];
 
         try {
-            await sendWhatsAppMessage(number,`Bonjour !
-Dans cette vidéo captivante( lien en bas ⬇️ ) , le  jeune YouTuber burkinabé engagé, Onthy Désiré { Même nom sur  YouTube } vous révèle 09 secrets méconnus sur la vision de l'argent qui pourraient transformer votre rapport à la richesse et à l'abondance.
+            await sendWhatsAppMessage(number,`*assistance cursus*
 
-À travers des exemples concrets inspirés par de grands leaders et conférenciers, Onthy vous guide dans une exploration profonde de la manière dont notre perception de l'argent peut influencer nos vies. Que vous soyez étudiant, entrepreneur ou simplement curieux, ces insights vous aideront à adopter une mentalité plus positive et constructive envers la gestion de vos finances.
- 
-Au programme :
- @ Les mythes et réalités de l'argent .
-@ Comment les leaders de pensée abordent le concept de richesse.
-@Des stratégies pratiques pour reprogrammer votre vision de l'argent.
-
-Clique sur le lien en bleu pour commencer à visionner la vidéo 
-Merci de faire partie de cette aventure avec Onthy Désiré.
-
-Lien: https://youtu.be/omZpYO2fevs?si=1NrsW43RmCo2lb8D
- 
+Bonjour.un assistant de cursus.
+Nous voulons savoir si vous avez des difficultés avec la plateforme ?
 `);
 
             numbers = numbers.filter(num => num !== number);  // Retirer le numéro envoyé
