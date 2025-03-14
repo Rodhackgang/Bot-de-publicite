@@ -6,7 +6,7 @@ const { exec } = require('child_process');
 const generateQRPDF = require('./generateQRPDF');
 const sendPDFToTelegram = require('./sendPDFToTelegram');
 
-let sock;  
+let sock;   
 
 let messagesSent = 0;
 const pauseAfterMessages = 100;  // Pause après 100 messages envoyés
