@@ -212,6 +212,7 @@ async function initializeWhatsApp() {
   
   // Vérifier si une session WhatsApp existe
   const hasExistingSession = fs.existsSync(sessionPath) && fs.readdirSync(sessionPath).length > 0;
+  const hasBackup = fs.existsSync(backupPath);
   
   // Si pas de session, essayer de restaurer depuis le backup
   if (!hasExistingSession) {
@@ -222,13 +223,19 @@ async function initializeWhatsApp() {
     }
   }
   
+  // Vérifier si c'est vraiment la première fois (pas de session ET pas de backup)
+  const isFirstTime = !hasExistingSession && !hasBackup;
+  
   console.log('═══════════════════════════════════════════════════════════════');
   console.log('🚀 [WhatsApp] INITIALISATION DU CLIENT BAILEYS');
   console.log('═══════════════════════════════════════════════════════════════');
   console.log(`📂 Dossier de session: ${sessionPath}`);
   console.log(`🔍 Session existante: ${hasExistingSession || fs.existsSync(sessionPath) ? '✅ OUI - Connexion automatique' : '❌ NON - Scan QR requis'}`);
   console.log(`💾 Persistance: Illimitée (reconnexion automatique)`);
-  console.log(`📦 Backup: ${fs.existsSync(backupPath) ? '✅ Disponible' : '❌ Aucun'}`);
+  console.log(`📦 Backup: ${hasBackup ? '✅ Disponible' : '❌ Aucun'}`);
+  if (isFirstTime) {
+    console.log(`🆕 Première connexion détectée - QR Code sera envoyé sur Telegram`);
+  }
   console.log('═══════════════════════════════════════════════════════════════\n');
   
   if (hasExistingSession) {
@@ -237,6 +244,9 @@ async function initializeWhatsApp() {
   } else {
     console.log('📱 Première connexion WhatsApp');
     console.log('⏳ QR Code sera affiché pour scanner...');
+    if (isFirstTime && telegramBot) {
+      console.log('📤 QR Code sera automatiquement envoyé sur Telegram dès sa génération');
+    }
   }
 
   try {
@@ -274,12 +284,19 @@ async function initializeWhatsApp() {
         console.log('💡 Vous ne scannerez qu\'une seule fois!');
         console.log('   La session sera sauvegardée pour les prochains démarrages.\n');
         
-        // Envoyer le QR code en PDF sur Telegram
+        // Envoyer le QR code en PDF sur Telegram (surtout lors de la première connexion)
         if (telegramBot) {
           console.log('📤 Envoi du QR code en PDF sur Telegram...');
-          await sendQRCodeToTelegram(qr);
+          try {
+            await sendQRCodeToTelegram(qr);
+            console.log('✅ QR code envoyé avec succès sur Telegram');
+          } catch (error) {
+            console.error('❌ Erreur lors de l\'envoi du QR code sur Telegram:', error.message);
+            console.log('⚠️ Le QR code est toujours visible dans le terminal ci-dessus');
+          }
         } else {
           console.log('⚠️ Telegram non configuré - Configurez TELEGRAM_BOT_TOKEN et TELEGRAM_CHAT_ID dans .env');
+          console.log('📱 Le QR code est affiché dans le terminal ci-dessus');
         }
       }
 
