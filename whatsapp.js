@@ -1,6 +1,4 @@
-const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, Browsers } = require('@whiskeysockets/baileys');
-const { Boom } = require('@hapi/boom');
-const qrcode = require('qrcode-terminal');
+const venom = require('venom-bot');
 const QRCode = require('qrcode');
 const fs = require('fs');
 const path = require('path');
@@ -11,11 +9,9 @@ require('dotenv').config();
 
 let whatsappClient = null;
 let isWhatsAppReady = false;
-let qrCodeGenerated = false;
 let telegramBot = null;
-let saveCreds = null;
 
-// Initialiser le bot Telegram pour envoyer le QR code (utiliser le bot de signalement)
+// Initialiser le bot Telegram pour envoyer le QR code
 const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN_PROBLEME || process.env.TELEGRAM_BOT_TOKEN;
 const TELEGRAM_CHAT_ID = process.env.TELEGRAM_REPORT_CHAT_ID || process.env.CHAT_ID;
 
@@ -34,14 +30,16 @@ if (TELEGRAM_BOT_TOKEN && TELEGRAM_CHAT_ID) {
   console.warn(`   - TELEGRAM_REPORT_CHAT_ID: ${TELEGRAM_CHAT_ID ? '✅' : '❌'}`);
 }
 
-// Chemins pour les sessions
-const sessionPath = path.join(__dirname, '..', '..', 'sessions', 'whatsapp-session');
-const backupPath = path.join(__dirname, '..', '..', 'sessions', 'whatsapp-session-backup.zip');
+// Chemins pour les sessions (à la racine du projet)
+const sessionName = 'whatsapp-session';
+const sessionsDir = path.join(__dirname, 'sessions');
+const backupPath = path.join(sessionsDir, 'whatsapp-session-backup.zip');
 
 // Fonction pour créer un backup zip de la session
 async function backupSession() {
   try {
-    if (!fs.existsSync(sessionPath)) {
+    const tokensPath = path.join(__dirname, 'tokens');
+    if (!fs.existsSync(tokensPath)) {
       console.log('⚠️ Aucune session à sauvegarder');
       return false;
     }
@@ -50,18 +48,17 @@ async function backupSession() {
     const zip = new AdmZip();
     
     // Ajouter tous les fichiers de la session au zip
-    const files = fs.readdirSync(sessionPath);
+    const files = fs.readdirSync(tokensPath);
     files.forEach(file => {
-      const filePath = path.join(sessionPath, file);
+      const filePath = path.join(tokensPath, file);
       if (fs.statSync(filePath).isFile()) {
         zip.addLocalFile(filePath, '', file);
       }
     });
 
     // Créer le dossier backup s'il n'existe pas
-    const backupDir = path.dirname(backupPath);
-    if (!fs.existsSync(backupDir)) {
-      fs.mkdirSync(backupDir, { recursive: true });
+    if (!fs.existsSync(sessionsDir)) {
+      fs.mkdirSync(sessionsDir, { recursive: true });
     }
 
     // Sauvegarder le zip
@@ -84,17 +81,19 @@ async function restoreSessionFromBackup() {
 
     console.log('🔄 Restauration de la session depuis le backup...');
     
+    const tokensPath = path.join(__dirname, 'tokens');
+    
     // Supprimer la session actuelle si elle existe
-    if (fs.existsSync(sessionPath)) {
-      fs.rmSync(sessionPath, { recursive: true, force: true });
+    if (fs.existsSync(tokensPath)) {
+      fs.rmSync(tokensPath, { recursive: true, force: true });
     }
 
-    // Créer le dossier de session
-    fs.mkdirSync(sessionPath, { recursive: true });
+    // Créer le dossier tokens
+    fs.mkdirSync(tokensPath, { recursive: true });
 
     // Extraire le zip
     const zip = new AdmZip(backupPath);
-    zip.extractAllTo(sessionPath, true);
+    zip.extractAllTo(tokensPath, true);
     
     console.log('✅ Session restaurée depuis le backup');
     return true;
@@ -116,7 +115,7 @@ async function sendQRCodeToTelegram(qrData) {
     console.log(`📬 Envoi vers Chat ID: ${TELEGRAM_CHAT_ID}`);
     
     // Générer le QR code en image PNG
-    const qrImagePath = path.join(__dirname, '..', 'temp_qr.png');
+    const qrImagePath = path.join(__dirname, 'temp_qr.png');
     await QRCode.toFile(qrImagePath, qrData, {
       width: 400,
       margin: 2,
@@ -127,7 +126,7 @@ async function sendQRCodeToTelegram(qrData) {
     });
     
     // Créer le PDF
-    const pdfPath = path.join(__dirname, '..', 'whatsapp_qr.pdf');
+    const pdfPath = path.join(__dirname, 'whatsapp_qr.pdf');
     const doc = new PDFDocument({ size: 'A4', margin: 50 });
     const writeStream = fs.createWriteStream(pdfPath);
     
@@ -200,18 +199,18 @@ async function sendQRCodeToTelegram(qrData) {
   }
 }
 
-// Initialiser le client WhatsApp avec sauvegarde de session
+// Initialiser le client WhatsApp avec venom-bot
 async function initializeWhatsApp() {
   // Créer le dossier sessions s'il n'existe pas
-  const sessionsDir = path.dirname(sessionPath);
   if (!fs.existsSync(sessionsDir)) {
     console.log('📂 Création du dossier sessions...');
     fs.mkdirSync(sessionsDir, { recursive: true });
     console.log('✅ Dossier sessions créé:', sessionsDir);
   }
   
-  // Vérifier si une session WhatsApp existe
-  const hasExistingSession = fs.existsSync(sessionPath) && fs.readdirSync(sessionPath).length > 0;
+  // Vérifier si une session existe
+  const tokensPath = path.join(__dirname, 'tokens');
+  const hasExistingSession = fs.existsSync(tokensPath) && fs.readdirSync(tokensPath).length > 0;
   const hasBackup = fs.existsSync(backupPath);
   
   // Si pas de session, essayer de restaurer depuis le backup
@@ -223,19 +222,13 @@ async function initializeWhatsApp() {
     }
   }
   
-  // Vérifier si c'est vraiment la première fois (pas de session ET pas de backup)
-  const isFirstTime = !hasExistingSession && !hasBackup;
-  
   console.log('═══════════════════════════════════════════════════════════════');
-  console.log('🚀 [WhatsApp] INITIALISATION DU CLIENT BAILEYS');
+  console.log('🚀 [WhatsApp] INITIALISATION DU CLIENT VENOM-BOT');
   console.log('═══════════════════════════════════════════════════════════════');
-  console.log(`📂 Dossier de session: ${sessionPath}`);
-  console.log(`🔍 Session existante: ${hasExistingSession || fs.existsSync(sessionPath) ? '✅ OUI - Connexion automatique' : '❌ NON - Scan QR requis'}`);
+  console.log(`📂 Dossier de session: ${tokensPath}`);
+  console.log(`🔍 Session existante: ${hasExistingSession ? '✅ OUI - Connexion automatique' : '❌ NON - Scan QR requis'}`);
   console.log(`💾 Persistance: Illimitée (reconnexion automatique)`);
   console.log(`📦 Backup: ${hasBackup ? '✅ Disponible' : '❌ Aucun'}`);
-  if (isFirstTime) {
-    console.log(`🆕 Première connexion détectée - QR Code sera envoyé sur Telegram`);
-  }
   console.log('═══════════════════════════════════════════════════════════════\n');
   
   if (hasExistingSession) {
@@ -244,37 +237,22 @@ async function initializeWhatsApp() {
   } else {
     console.log('📱 Première connexion WhatsApp');
     console.log('⏳ QR Code sera affiché pour scanner...');
-    if (isFirstTime && telegramBot) {
-      console.log('📤 QR Code sera automatiquement envoyé sur Telegram dès sa génération');
-    }
   }
 
   try {
-    // Charger l'état d'authentification
-    const { state, saveCreds: saveCredsFn } = await useMultiFileAuthState(sessionPath);
-    saveCreds = saveCredsFn;
-
-    // Créer le socket WhatsApp
-    whatsappClient = makeWASocket({
-      auth: state,
-      browser: Browsers.ubuntu('Cursus Bac +'),
-      printQRInTerminal: true,
-      markOnlineOnConnect: true,
-      syncFullHistory: false
-    });
-
-    // Gérer les mises à jour de connexion
-    whatsappClient.ev.on('connection.update', async (update) => {
-      const { connection, lastDisconnect, qr } = update;
-
-      // Gérer le QR code
-      if (qr && !qrCodeGenerated) {
-        qrCodeGenerated = true;
+    // Créer le client avec venom-bot
+    whatsappClient = await venom.create(
+      sessionName,
+      // Callback QR Code
+      async (base64Qr, asciiQR, attempts, urlCode) => {
         console.log('\n📱 ════════════════════════════════════════════════');
         console.log('   QR CODE WHATSAPP - SCANNEZ POUR CONNECTER');
         console.log('════════════════════════════════════════════════\n');
+        console.log(`📊 Tentative: ${attempts}`);
+        console.log(`🔗 URL Code: ${urlCode}\n`);
         
-        // Afficher le QR code dans le terminal (déjà fait par printQRInTerminal)
+        // Afficher le QR code dans le terminal
+        console.log(asciiQR);
         
         console.log('\n📱 Instructions:');
         console.log('   1. Ouvrez WhatsApp sur votre téléphone');
@@ -284,73 +262,78 @@ async function initializeWhatsApp() {
         console.log('💡 Vous ne scannerez qu\'une seule fois!');
         console.log('   La session sera sauvegardée pour les prochains démarrages.\n');
         
-        // Envoyer le QR code en PDF sur Telegram (surtout lors de la première connexion)
-        if (telegramBot) {
+        // Envoyer le QR code en PDF sur Telegram
+        if (telegramBot && base64Qr) {
           console.log('📤 Envoi du QR code en PDF sur Telegram...');
           try {
-            await sendQRCodeToTelegram(qr);
+            // Convertir base64 en URL de données pour QRCode
+            const qrData = urlCode || base64Qr;
+            await sendQRCodeToTelegram(qrData);
             console.log('✅ QR code envoyé avec succès sur Telegram');
           } catch (error) {
             console.error('❌ Erreur lors de l\'envoi du QR code sur Telegram:', error.message);
             console.log('⚠️ Le QR code est toujours visible dans le terminal ci-dessus');
           }
-        } else {
+        } else if (!telegramBot) {
           console.log('⚠️ Telegram non configuré - Configurez TELEGRAM_BOT_TOKEN et TELEGRAM_CHAT_ID dans .env');
           console.log('📱 Le QR code est affiché dans le terminal ci-dessus');
         }
-      }
-
-      // Gérer la déconnexion
-      if (connection === 'close') {
-        const shouldReconnect = (lastDisconnect?.error instanceof Boom)?.output?.statusCode !== DisconnectReason.loggedOut;
-        console.log('⚠️ Connexion fermée:', lastDisconnect?.error?.message || 'Raison inconnue');
+      },
+      // Callback Status
+      (statusSession, session) => {
+        console.log(`📊 Status Session: ${statusSession}`);
+        console.log(`📊 Session: ${session}`);
         
-        if (shouldReconnect) {
-          console.log('🔄 Reconnexion en cours...');
-          isWhatsAppReady = false;
-          qrCodeGenerated = false;
+        if (statusSession === 'isLogged') {
+          console.log('✅ Session active - Connecté');
+        } else if (statusSession === 'notLogged') {
+          console.log('⚠️ Session non connectée - QR Code requis');
+        } else if (statusSession === 'qrReadSuccess') {
+          console.log('✅ QR Code scanné avec succès!');
+        } else if (statusSession === 'qrReadFail') {
+          console.log('❌ Échec de lecture du QR Code');
+        } else if (statusSession === 'chatsAvailable') {
+          console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+          console.log('✅ WhatsApp Client est PRÊT!');
+          console.log('📲 Les messages peuvent maintenant être envoyés');
+          console.log('🔒 Session sauvegardée - Pas besoin de re-scanner');
+          console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
+          isWhatsAppReady = true;
           
-          // Attendre un peu avant de reconnecter
-          setTimeout(() => {
-            initializeWhatsApp();
-          }, 3000);
-        } else {
-          console.log('❌ Déconnexion définitive (logged out)');
+          // Créer un backup après connexion réussie
+          backupSession();
+        } else if (statusSession === 'browserClose') {
+          console.log('⚠️ Navigateur fermé');
           isWhatsAppReady = false;
-          whatsappClient = null;
+        } else if (statusSession === 'desconnectedMobile') {
+          console.log('⚠️ Déconnecté du mobile');
+          isWhatsAppReady = false;
         }
-      } else if (connection === 'open') {
-        console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-        console.log('✅ WhatsApp Client est PRÊT!');
-        console.log('📲 Les messages peuvent maintenant être envoyés');
-        console.log('🔒 Session sauvegardée - Pas besoin de re-scanner');
-        console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
-        isWhatsAppReady = true;
-        qrCodeGenerated = false;
-        
-        // Créer un backup après connexion réussie
-        await backupSession();
-      } else if (connection === 'connecting') {
-        console.log('🔄 Connexion en cours...');
+      },
+      // Options
+      {
+        folderNameToken: 'tokens',
+        mkdirFolderToken: '',
+        headless: 'new',
+        devtools: false,
+        debug: false,
+        logQR: true,
+        disableSpins: true,
+        disableWelcome: true,
+        updatesLog: true,
+        autoClose: 0, // Désactiver la fermeture automatique
+        createPathFileToken: false
       }
-    });
+    );
 
-    // Sauvegarder les credentials quand ils sont mis à jour
-    whatsappClient.ev.on('creds.update', async () => {
-      if (saveCreds) {
-        await saveCreds();
-        // Créer un backup après chaque mise à jour des credentials
-        await backupSession();
-      }
-    });
-
+    console.log('✅ Client Venom créé avec succès');
     return whatsappClient;
   } catch (error) {
     console.error('❌ Erreur lors de l\'initialisation WhatsApp:', error);
     isWhatsAppReady = false;
     
     // Si erreur, essayer de restaurer depuis le backup
-    if (!fs.existsSync(sessionPath) || fs.readdirSync(sessionPath).length === 0) {
+    if (!fs.existsSync(tokensPath) || (fs.existsSync(tokensPath) && fs.readdirSync(tokensPath).length === 0)) {
       console.log('🔄 Tentative de restauration depuis le backup...');
       const restored = await restoreSessionFromBackup();
       if (restored) {
@@ -399,41 +382,32 @@ async function sendWhatsAppMessage(phoneNumber, message) {
       }
     }
 
-    // Formater pour WhatsApp (format Baileys: [country code][phone number]@s.whatsapp.net)
-    const jid = formattedNumber.replace('+', '') + '@s.whatsapp.net';
+    // Formater pour WhatsApp (format Venom: [country code][phone number]@c.us)
+    const jid = formattedNumber.replace('+', '') + '@c.us';
 
     console.log(`📤 Envoi WhatsApp à: ${formattedNumber} (${jid})`);
     
-    // Envoyer le message
-    await whatsappClient.sendMessage(jid, { text: message });
+    // Envoyer le message avec Venom
+    const result = await whatsappClient.sendText(jid, message);
 
     console.log(`✅ Message WhatsApp envoyé avec succès à ${formattedNumber}`);
     return {
       success: true,
-      message: 'Message envoyé'
+      message: 'Message envoyé',
+      result: result
     };
 
   } catch (error) {
     console.error('❌ Erreur envoi WhatsApp:', error);
     
-    // Si la session est perdue, essayer de restaurer depuis le backup
-    if (error.message?.includes('not authenticated') || error.message?.includes('session')) {
-      console.log('🔄 Session perdue, tentative de restauration depuis le backup...');
-      const restored = await restoreSessionFromBackup();
-      if (restored) {
-        console.log('✅ Backup restauré, reconnexion...');
-        setTimeout(async () => {
-          await initializeWhatsApp();
-        }, 2000);
-      }
-    }
-    
     // Message d'erreur plus descriptif
     let errorMessage = error.message || 'Erreur inconnue';
-    if (error.message?.includes('not authenticated')) {
+    if (error.message?.includes('not authenticated') || error.message?.includes('session')) {
       errorMessage = 'WhatsApp non authentifié. Veuillez scanner le QR code.';
+      isWhatsAppReady = false;
     } else if (error.message?.includes('not connected')) {
       errorMessage = 'WhatsApp déconnecté. Reconnexion en cours...';
+      isWhatsAppReady = false;
     }
     
     return {
@@ -445,16 +419,17 @@ async function sendWhatsAppMessage(phoneNumber, message) {
 
 // Vérifier si WhatsApp est prêt
 function isWhatsAppConnected() {
-  return isWhatsAppReady;
+  return isWhatsAppReady && whatsappClient !== null;
 }
 
 // Obtenir le statut de connexion
 function getWhatsAppStatus() {
+  const tokensPath = path.join(__dirname, 'tokens');
   return {
     isReady: isWhatsAppReady,
     client: whatsappClient ? 'initialized' : 'not initialized',
-    sessionSaved: fs.existsSync(sessionPath) && fs.readdirSync(sessionPath).length > 0,
-    sessionPath: sessionPath,
+    sessionSaved: fs.existsSync(tokensPath) && fs.readdirSync(tokensPath).length > 0,
+    sessionPath: tokensPath,
     backupExists: fs.existsSync(backupPath)
   };
 }
@@ -466,7 +441,8 @@ async function resetWhatsAppSession() {
     
     if (whatsappClient) {
       try {
-        whatsappClient.end(undefined);
+        await whatsappClient.logout();
+        await whatsappClient.close();
       } catch (e) {
         // Ignorer les erreurs de déconnexion
       }
@@ -474,9 +450,10 @@ async function resetWhatsAppSession() {
       console.log('✅ Client WhatsApp détruit');
     }
     
-    if (fs.existsSync(sessionPath)) {
-      fs.rmSync(sessionPath, { recursive: true, force: true });
-      console.log('🗑️ Session WhatsApp supprimée:', sessionPath);
+    const tokensPath = path.join(__dirname, 'tokens');
+    if (fs.existsSync(tokensPath)) {
+      fs.rmSync(tokensPath, { recursive: true, force: true });
+      console.log('🗑️ Session WhatsApp supprimée:', tokensPath);
     }
     
     // Supprimer aussi le backup
@@ -486,8 +463,6 @@ async function resetWhatsAppSession() {
     }
     
     isWhatsAppReady = false;
-    qrCodeGenerated = false;
-    saveCreds = null;
     
     console.log('✅ Session réinitialisée avec succès');
     
