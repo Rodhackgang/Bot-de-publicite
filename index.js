@@ -3,7 +3,7 @@ const { getWhatsAppMessage, getMessageVariantsCount } = require('./whatsappMessa
 const fs = require('fs');
 const path = require('path');
 require('dotenv').config();
-
+ 
 // Vérifier si on est en mode test
 const IS_TEST_MODE = process.env.TEST === '1';
 
