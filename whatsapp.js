@@ -1,52 +1,109 @@
-const axios = require('axios');
+const { Client, LocalAuth } = require('whatsapp-web.js');
 const qrcode = require('qrcode-terminal');
 const QRCode = require('qrcode');
 const fs = require('fs');
 const path = require('path');
 const PDFDocument = require('pdfkit');
 const TelegramBot = require('node-telegram-bot-api');
+const AdmZip = require('adm-zip');
 require('dotenv').config();
 
-// Configuration GREEN-API
-const GREEN_API_ID_INSTANCE = process.env.GREEN_API_ID_INSTANCE || '7105432720';
-const GREEN_API_TOKEN = process.env.GREEN_API_TOKEN_INSTANCE || '7600ed59e74045398f18cb312ce58fa071bcae6a480440b4ac';
-// Construire l'URL de l'API: https://{4 premiers chiffres}.api.greenapi.com
-const GREEN_API_BASE_NUMBER = GREEN_API_ID_INSTANCE.toString().slice(0, 4);
-const GREEN_API_URL = process.env.GREEN_API_URL || `https://${GREEN_API_BASE_NUMBER}.api.greenapi.com`;
-
+let client = null;
 let isWhatsAppReady = false;
 let qrCodeGenerated = false;
 let telegramBot = null;
-let qrCheckInterval = null;
-let stateCheckInterval = null;
 
-// Initialiser le bot Telegram pour envoyer le QR code (utiliser le bot de signalement)
-const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN_PROBLEME || process.env.TELEGRAM_BOT_TOKEN;
-const TELEGRAM_CHAT_ID = process.env.TELEGRAM_REPORT_CHAT_ID || process.env.CHAT_ID;
+// Initialiser le bot Telegram pour envoyer le QR code
+const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
+const TELEGRAM_CHAT_ID = process.env.CHAT_ID;
 
 if (TELEGRAM_BOT_TOKEN && TELEGRAM_CHAT_ID) {
   try {
     telegramBot = new TelegramBot(TELEGRAM_BOT_TOKEN, { polling: false });
     console.log('✅ Bot Telegram initialisé pour QR Code WhatsApp');
-    console.log(`📬 Bot Token: ${TELEGRAM_BOT_TOKEN.substring(0, 20)}...`);
     console.log(`📬 Chat ID: ${TELEGRAM_CHAT_ID}`);
   } catch (error) {
     console.error('❌ Erreur initialisation Telegram:', error.message);
   }
 } else {
-  console.warn('⚠️ Variables Telegram manquantes:');
-  console.warn(`   - TELEGRAM_BOT_TOKEN_PROBLEME: ${TELEGRAM_BOT_TOKEN ? '✅' : '❌'}`);
-  console.warn(`   - TELEGRAM_REPORT_CHAT_ID: ${TELEGRAM_CHAT_ID ? '✅' : '❌'}`);
+  console.warn('⚠️ Variables Telegram manquantes dans .env:');
+  console.warn(`   - TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN ? '✅' : '❌'}`);
+  console.warn(`   - CHAT_ID: ${TELEGRAM_CHAT_ID ? '✅' : '❌'}`);
+  console.warn('   Le QR code ne sera pas envoyé sur Telegram\n');
 }
 
-// États possibles de l'instance GREEN-API
-const InstanceState = {
-  NOT_AUTHORIZED: 'notAuthorized',
-  AUTHORIZED: 'authorized',
-  BLOCKED: 'blocked',
-  SLEEP_MODE: 'sleepMode',
-  STARTING: 'starting'
-};
+// Chemins des fichiers de session
+const SESSION_DIR = path.join(__dirname, 'sessions', 'whatsapp-session');
+const SESSION_ZIP = path.join(__dirname, 'sessions', 'whatsapp-session.zip');
+
+// Fonction pour sauvegarder la session en ZIP
+function saveSessionToZip() {
+  try {
+    if (!fs.existsSync(SESSION_DIR)) {
+      console.log('⚠️ Aucun dossier de session à sauvegarder');
+      return false;
+    }
+
+    console.log('💾 Sauvegarde de la session en ZIP...');
+    const zip = new AdmZip();
+    
+    // Ajouter tous les fichiers du dossier de session au ZIP
+    const files = fs.readdirSync(SESSION_DIR);
+    files.forEach(file => {
+      const filePath = path.join(SESSION_DIR, file);
+      if (fs.statSync(filePath).isFile()) {
+        zip.addLocalFile(filePath, '', file);
+      }
+    });
+
+    // Créer le dossier sessions s'il n'existe pas
+    const sessionsDir = path.dirname(SESSION_ZIP);
+    if (!fs.existsSync(sessionsDir)) {
+      fs.mkdirSync(sessionsDir, { recursive: true });
+    }
+
+    // Sauvegarder le ZIP
+    zip.writeZip(SESSION_ZIP);
+    console.log(`✅ Session sauvegardée dans: ${SESSION_ZIP}`);
+    return true;
+  } catch (error) {
+    console.error('❌ Erreur lors de la sauvegarde de la session:', error);
+    return false;
+  }
+}
+
+// Fonction pour restaurer la session depuis le ZIP
+function restoreSessionFromZip() {
+  try {
+    if (!fs.existsSync(SESSION_ZIP)) {
+      console.log('⚠️ Aucun fichier ZIP de session trouvé');
+      return false;
+    }
+
+    console.log('📦 Restauration de la session depuis le ZIP...');
+    
+    // Créer le dossier de session s'il n'existe pas
+    if (!fs.existsSync(SESSION_DIR)) {
+      fs.mkdirSync(SESSION_DIR, { recursive: true });
+    } else {
+      // Nettoyer le dossier existant
+      const files = fs.readdirSync(SESSION_DIR);
+      files.forEach(file => {
+        fs.unlinkSync(path.join(SESSION_DIR, file));
+      });
+    }
+
+    // Extraire le ZIP
+    const zip = new AdmZip(SESSION_ZIP);
+    zip.extractAllTo(SESSION_DIR, true);
+    
+    console.log('✅ Session restaurée depuis le ZIP');
+    return true;
+  } catch (error) {
+    console.error('❌ Erreur lors de la restauration de la session:', error);
+    return false;
+  }
+}
 
 // Fonction pour générer le QR code en PDF et l'envoyer sur Telegram
 async function sendQRCodeToTelegram(qrData) {
@@ -57,7 +114,6 @@ async function sendQRCodeToTelegram(qrData) {
 
   try {
     console.log('📄 Génération du QR code en PDF...');
-    console.log(`📬 Envoi vers Chat ID: ${TELEGRAM_CHAT_ID}`);
     
     // Générer le QR code en image PNG
     const qrImagePath = path.join(__dirname, 'temp_qr.png');
@@ -78,10 +134,9 @@ async function sendQRCodeToTelegram(qrData) {
     doc.pipe(writeStream);
     
     // En-tête
-    doc.fontSize(24).text('Cursus Bac + 🇧🇫 WhatsApp QR Code', { align: 'center' });
+    doc.fontSize(24).text('Bot de Publicité WhatsApp QR Code', { align: 'center' });
     doc.moveDown();
     doc.fontSize(14).text('Scannez ce QR code pour connecter WhatsApp', { align: 'center' });
-    doc.fontSize(12).fillColor('#666666').text('(Codes OTP de suppression de compte)', { align: 'center' });
     doc.moveDown(2);
     
     // Ajouter le QR code
@@ -121,12 +176,11 @@ async function sendQRCodeToTelegram(qrData) {
     
     // Envoyer sur Telegram
     await telegramBot.sendDocument(TELEGRAM_CHAT_ID, pdfPath, {
-      caption: '📱 *WhatsApp QR Code - Cursus Bac +*\n\n🔐 Scannez ce QR code pour connecter WhatsApp à la plateforme.\n\n⏰ Ce QR code expire dans quelques minutes.\n\n📝 Ce QR code permettra d\'envoyer les codes OTP de suppression de compte.\n\n— Support Cursus Bac + 🇧🇫',
+      caption: '📱 *WhatsApp QR Code*\n\n🔐 Scannez ce QR code pour connecter WhatsApp.\n\n⏰ Ce QR code expire dans quelques minutes.',
       parse_mode: 'Markdown'
     });
     
     console.log('✅ QR code PDF envoyé sur Telegram');
-    console.log(`📬 Envoyé au Chat ID: ${TELEGRAM_CHAT_ID}`);
     
     // Nettoyer les fichiers temporaires
     setTimeout(() => {
@@ -144,134 +198,144 @@ async function sendQRCodeToTelegram(qrData) {
   }
 }
 
-// Obtenir l'état de l'instance GREEN-API
-async function getInstanceState() {
-  try {
-    const response = await axios.get(
-      `${GREEN_API_URL}/waInstance${GREEN_API_ID_INSTANCE}/getStateInstance/${GREEN_API_TOKEN}`
-    );
-    return response.data.stateInstance;
-  } catch (error) {
-    console.error('❌ Erreur lors de la vérification de l\'état:', error.response?.data || error.message);
-    return null;
-  }
-}
-
-// Obtenir le QR code depuis GREEN-API
-async function getQRCode() {
-  try {
-    const response = await axios.get(
-      `${GREEN_API_URL}/waInstance${GREEN_API_ID_INSTANCE}/qr/${GREEN_API_TOKEN}`
-    );
-    // GREEN-API retourne soit {qrCode: "..."} soit directement le QR code en string
-    const qrCode = response.data.qrCode || response.data;
-    return qrCode;
-  } catch (error) {
-    console.error('❌ Erreur lors de la récupération du QR code:', error.response?.data || error.message);
-    return null;
-  }
-}
-
-// Vérifier périodiquement l'état et gérer le QR code si nécessaire
-async function checkStateAndHandleQR() {
-  const state = await getInstanceState();
+// Fonction pour formater un numéro de téléphone en format WhatsApp
+function formatToWhatsAppNumber(phoneNumber) {
+  // Supprimer espaces, tirets, etc.
+  let formattedNumber = phoneNumber.replace(/[\s\-\(\)]/g, '');
   
-  if (state === InstanceState.NOT_AUTHORIZED || state === InstanceState.STARTING) {
-    if (!qrCodeGenerated) {
-      console.log('\n📱 ════════════════════════════════════════════════');
-      console.log('   QR CODE WHATSAPP - SCANNEZ POUR CONNECTER');
-      console.log('════════════════════════════════════════════════\n');
-      
-      const qrData = await getQRCode();
-      if (qrData) {
-        qrCodeGenerated = true;
-        const qrUrl = typeof qrData === 'string' ? qrData : (qrData.qrCode || qrData);
+  // Ajouter l'indicatif pays si nécessaire
+  if (!formattedNumber.startsWith('+')) {
+    if (formattedNumber.startsWith('226')) {
+      formattedNumber = '+' + formattedNumber;
+    } else if (formattedNumber.startsWith('0')) {
+      formattedNumber = '+226' + formattedNumber.substring(1);
+    } else {
+      formattedNumber = '+226' + formattedNumber;
+    }
+  }
+  
+  return formattedNumber;
+}
+
+// Fonction pour formater le numéro en ID WhatsApp (format: 226XXXXXXXXX@c.us)
+function formatToWhatsAppID(phoneNumber) {
+  const formatted = formatToWhatsAppNumber(phoneNumber);
+  // Retirer le + et ajouter @c.us
+  const numberOnly = formatted.replace('+', '');
+  return `${numberOnly}@c.us`;
+}
+
+// Fonction pour vérifier si un numéro existe sur WhatsApp
+async function checkNumberExists(phoneNumber) {
+  try {
+    if (!client || !isWhatsAppReady) {
+      return false;
+    }
+    
+    const chatId = formatToWhatsAppID(phoneNumber);
+    const contact = await client.getNumberId(chatId);
+    return contact !== null;
+  } catch (error) {
+    console.log(`⚠️ Impossible de vérifier le numéro ${phoneNumber}:`, error.message);
+    return false;
+  }
+}
+
+// Initialiser WhatsApp avec whatsapp-web.js
+async function initializeWhatsApp() {
+  console.log('═══════════════════════════════════════════════════════════════');
+  console.log('🚀 [WhatsApp] INITIALISATION DU CLIENT WHATSAPP-WEB.JS');
+  console.log('═══════════════════════════════════════════════════════════════\n');
+  
+  try {
+    // Restaurer la session depuis le ZIP si elle existe
+    restoreSessionFromZip();
+    
+    // Créer le client WhatsApp
+    console.log('🔌 Création du client WhatsApp...');
+    client = new Client({
+      authStrategy: new LocalAuth({
+        dataPath: SESSION_DIR
+      }),
+      puppeteer: {
+        headless: true,
+        args: [
+          '--no-sandbox',
+          '--disable-setuid-sandbox',
+          '--disable-dev-shm-usage',
+          '--disable-accelerated-2d-canvas',
+          '--no-first-run',
+          '--no-zygote',
+          '--single-process',
+          '--disable-gpu'
+        ]
+      }
+    });
+    
+    // Gérer le QR code
+    client.on('qr', async (qr) => {
+      if (!qrCodeGenerated) {
+        console.log('\n📱 ════════════════════════════════════════════════');
+        console.log('   QR CODE WHATSAPP - SCANNEZ POUR CONNECTER');
+        console.log('════════════════════════════════════════════════\n');
         
         // Afficher le QR code dans le terminal
-        qrcode.generate(qrUrl, { small: true });
+        qrcode.generate(qr, { small: true });
         
         console.log('\n📱 Instructions:');
         console.log('   1. Ouvrez WhatsApp sur votre téléphone');
         console.log('   2. Menu (⋮) → Appareils connectés');
         console.log('   3. Connecter un appareil');
-        console.log('   4. Scannez le QR code ci-dessus OU dans le PDF Telegram\n');
-        console.log('💡 Vous ne scannerez qu\'une seule fois!');
-        console.log('   La session sera sauvegardée automatiquement.\n');
-        console.log(`🔗 Ou utilisez cette URL: https://qr.green-api.com/waInstance${GREEN_API_ID_INSTANCE}/`);
+        console.log('   4. Scannez le QR code ci-dessus\n');
+        console.log('💡 Vous ne scannerez qu\'une seule fois!\n');
         
-        // Envoyer le QR code en PDF sur Telegram
+        qrCodeGenerated = true;
+        
+        // Envoyer le QR code sur Telegram si configuré
         if (telegramBot) {
-          console.log('📤 Envoi du QR code en PDF sur Telegram...');
-          await sendQRCodeToTelegram(qrUrl);
-        } else {
-          console.log('⚠️ Telegram non configuré - Configurez TELEGRAM_BOT_TOKEN et TELEGRAM_CHAT_ID dans .env');
+          await sendQRCodeToTelegram(qr);
         }
       }
-    }
-    isWhatsAppReady = false;
-  } else if (state === InstanceState.AUTHORIZED) {
-    if (!isWhatsAppReady) {
+    });
+    
+    // Gérer la connexion
+    client.on('ready', () => {
       console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
       console.log('✅ WhatsApp Client est PRÊT!');
       console.log('📲 Les messages peuvent maintenant être envoyés');
-      console.log('🔒 Instance autorisée - Pas besoin de re-scanner');
       console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
       isWhatsAppReady = true;
       qrCodeGenerated = false;
-    }
-  } else if (state === InstanceState.BLOCKED) {
-    console.error('❌ Instance bloquée');
-    isWhatsAppReady = false;
-  } else if (state === InstanceState.SLEEP_MODE) {
-    console.log('😴 Instance en mode veille');
-    isWhatsAppReady = false;
-  }
-}
-
-// Initialiser le client WhatsApp avec GREEN-API
-async function initializeWhatsApp() {
-  console.log('═══════════════════════════════════════════════════════════════');
-  console.log('🚀 [WhatsApp] INITIALISATION DU CLIENT GREEN-API');
-  console.log('═══════════════════════════════════════════════════════════════');
-  console.log(`🌐 API URL: ${GREEN_API_URL}`);
-  console.log(`🆔 Instance ID: ${GREEN_API_ID_INSTANCE}`);
-  console.log(`💾 Persistance: Illimitée (reconnexion automatique)`);
-  console.log('═══════════════════════════════════════════════════════════════\n');
-  
-  try {
-    // Vérifier l'état initial
-    const initialState = await getInstanceState();
-    console.log(`📊 État initial: ${initialState}`);
+      
+      // Sauvegarder la session en ZIP après connexion
+      setTimeout(() => {
+        saveSessionToZip();
+      }, 5000); // Attendre 5 secondes pour que la session soit complètement sauvegardée
+    });
     
-    if (initialState === InstanceState.AUTHORIZED) {
-      console.log('🔐 Instance déjà autorisée - Connexion automatique');
-      isWhatsAppReady = true;
-    } else {
-      console.log('📱 Instance non autorisée - QR Code requis');
+    // Gérer l'authentification
+    client.on('authenticated', () => {
+      console.log('✅ Authentification réussie');
+    });
+    
+    // Gérer les erreurs de connexion
+    client.on('auth_failure', (msg) => {
+      console.error('❌ Échec de l\'authentification:', msg);
       isWhatsAppReady = false;
-      // Obtenir le QR code immédiatement
-      await checkStateAndHandleQR();
-    }
+    });
     
-    // Vérifier l'état toutes les 5 secondes
-    if (stateCheckInterval) {
-      clearInterval(stateCheckInterval);
-    }
-    stateCheckInterval = setInterval(async () => {
-      await checkStateAndHandleQR();
-    }, 5000);
+    // Gérer les déconnexions
+    client.on('disconnected', (reason) => {
+      console.log('❌ Déconnecté:', reason);
+      isWhatsAppReady = false;
+      
+      // Sauvegarder la session avant déconnexion
+      saveSessionToZip();
+    });
     
-    // Vérifier le QR code toutes les 30 secondes si non autorisé
-    if (qrCheckInterval) {
-      clearInterval(qrCheckInterval);
-    }
-    qrCheckInterval = setInterval(async () => {
-      const state = await getInstanceState();
-      if (state === InstanceState.NOT_AUTHORIZED || state === InstanceState.STARTING) {
-        qrCodeGenerated = false; // Réinitialiser pour permettre la récupération d'un nouveau QR code
-        await checkStateAndHandleQR();
-      }
-    }, 30000);
+    // Démarrer le client
+    await client.initialize();
+    console.log('✅ Client initialisé');
     
     return true;
   } catch (error) {
@@ -281,106 +345,90 @@ async function initializeWhatsApp() {
   }
 }
 
-// Envoyer un message WhatsApp via GREEN-API
+// Envoyer un message WhatsApp
 async function sendWhatsAppMessage(phoneNumber, message) {
   try {
     // Vérifier que WhatsApp est prêt
-    if (!isWhatsAppReady) {
-      // Vérifier l'état avant d'échouer
-      const state = await getInstanceState();
-      if (state !== InstanceState.AUTHORIZED) {
-        console.error('❌ WhatsApp n\'est pas prêt (État:', state, ')');
-        return {
-          success: false,
-          message: 'WhatsApp non connecté. Attendez que l\'instance soit autorisée ou scannez le QR code.'
-        };
-      } else {
-        isWhatsAppReady = true;
-      }
+    if (!isWhatsAppReady || !client) {
+      console.error('❌ WhatsApp n\'est pas prêt');
+      return {
+        success: false,
+        message: 'WhatsApp non connecté. Attendez que la connexion soit établie.'
+      };
     }
 
-    // Formater le numéro (supprimer espaces, tirets, etc.)
-    let formattedNumber = phoneNumber.replace(/[\s\-\(\)]/g, '');
+    // Formater le numéro
+    const formattedNumber = formatToWhatsAppNumber(phoneNumber);
+    const chatId = formatToWhatsAppID(phoneNumber);
     
-    // Ajouter l'indicatif pays si nécessaire
-    if (!formattedNumber.startsWith('+')) {
-      if (formattedNumber.startsWith('226')) {
-        formattedNumber = '+' + formattedNumber;
-      } else if (formattedNumber.startsWith('0')) {
-        formattedNumber = '+226' + formattedNumber.substring(1);
-      } else {
-        formattedNumber = '+226' + formattedNumber;
-      }
-    }
-
-    // Formater pour GREEN-API (format: [country code][phone number]@c.us)
-    const chatId = formattedNumber.replace('+', '') + '@c.us';
-
     console.log(`📤 Envoi WhatsApp à: ${formattedNumber} (${chatId})`);
     
-    // Envoyer le message via GREEN-API
-    const response = await axios.post(
-      `${GREEN_API_URL}/waInstance${GREEN_API_ID_INSTANCE}/sendMessage/${GREEN_API_TOKEN}`,
-      {
-        chatId: chatId,
-        message: message
-      },
-      {
-        headers: {
-          'Content-Type': 'application/json'
+    // Vérifier si le numéro existe sur WhatsApp (optionnel, peut ralentir)
+    // On peut essayer d'envoyer directement et gérer l'erreur
+    
+    // Envoyer le message en utilisant le chatId
+    let result;
+    try {
+      // Essayer d'envoyer avec le chatId d'abord
+      result = await client.sendMessage(chatId, message);
+    } catch (chatIdError) {
+      // Si ça échoue, essayer avec le numéro formaté
+      try {
+        result = await client.sendMessage(formattedNumber, message);
+      } catch (numberError) {
+        // Si les deux échouent, vérifier si le numéro existe
+        const exists = await checkNumberExists(phoneNumber);
+        if (!exists) {
+          throw new Error(`Le numéro ${formattedNumber} n'existe pas sur WhatsApp`);
         }
+        throw numberError;
       }
-    );
-
+    }
+    
     console.log(`✅ Message WhatsApp envoyé avec succès à ${formattedNumber}`);
-    console.log(`📨 ID du message: ${response.data.idMessage || 'N/A'}`);
+    console.log(`📨 ID du message: ${result.id._serialized || 'N/A'}`);
+    
+    // Sauvegarder la session après l'envoi (seulement si succès)
+    saveSessionToZip();
     
     return {
       success: true,
       message: 'Message envoyé',
-      idMessage: response.data.idMessage
+      idMessage: result.id._serialized
     };
 
   } catch (error) {
-    console.error('❌ Erreur envoi WhatsApp:', error.response?.data || error.message);
+    const errorMessage = error.message || error.toString();
+    console.error('❌ Erreur envoi WhatsApp:', errorMessage);
     
-    // Si l'instance n'est pas autorisée, vérifier l'état et générer un QR code
-    if (error.response?.status === 401 || error.response?.status === 403) {
-      console.log('⚠️ Instance non autorisée, vérification de l\'état...');
-      isWhatsAppReady = false;
-      qrCodeGenerated = false;
-      await checkStateAndHandleQR();
-    }
-    
-    // Message d'erreur plus descriptif
-    let errorMessage = error.response?.data?.error || error.message || 'Erreur inconnue';
-    if (error.response?.status === 401) {
-      errorMessage = 'Instance non autorisée. Veuillez scanner le QR code.';
-    } else if (error.response?.status === 403) {
-      errorMessage = 'Accès refusé. Vérifiez vos identifiants.';
+    // Analyser le type d'erreur
+    let userMessage = errorMessage;
+    if (errorMessage.includes('Evaluation failed')) {
+      userMessage = 'Le numéro n\'existe pas sur WhatsApp ou n\'est pas valide';
+    } else if (errorMessage.includes('not registered')) {
+      userMessage = 'Le numéro n\'est pas enregistré sur WhatsApp';
+    } else if (errorMessage.includes('n\'existe pas')) {
+      userMessage = 'Le numéro n\'existe pas sur WhatsApp';
     }
     
     return {
       success: false,
-      message: errorMessage
+      message: userMessage
     };
   }
 }
 
 // Vérifier si WhatsApp est prêt
 function isWhatsAppConnected() {
-  return isWhatsAppReady;
+  return isWhatsAppReady && client !== null;
 }
 
 // Obtenir le statut de connexion
 async function getWhatsAppStatus() {
-  const state = await getInstanceState();
   return {
     isReady: isWhatsAppReady,
-    state: state,
-    apiUrl: GREEN_API_URL,
-    idInstance: GREEN_API_ID_INSTANCE,
-    isAuthorized: state === InstanceState.AUTHORIZED
+    isConnected: isWhatsAppConnected(),
+    hasClient: client !== null
   };
 }
 
@@ -389,24 +437,24 @@ async function resetWhatsAppSession() {
   try {
     console.log('🔄 Déconnexion de l\'instance WhatsApp...');
     
-    // Arrêter les intervalles
-    if (stateCheckInterval) {
-      clearInterval(stateCheckInterval);
-      stateCheckInterval = null;
-    }
-    if (qrCheckInterval) {
-      clearInterval(qrCheckInterval);
-      qrCheckInterval = null;
+    if (client) {
+      // Sauvegarder avant de déconnecter
+      saveSessionToZip();
+      
+      await client.logout();
+      await client.destroy();
+      client = null;
     }
     
-    try {
-      // Appeler l'endpoint logout de GREEN-API
-      await axios.get(
-        `${GREEN_API_URL}/waInstance${GREEN_API_ID_INSTANCE}/logout/${GREEN_API_TOKEN}`
-      );
-      console.log('✅ Instance déconnectée avec succès');
-    } catch (error) {
-      console.log('⚠️ Erreur lors de la déconnexion (peut-être déjà déconnectée):', error.response?.data || error.message);
+    // Supprimer le dossier de session et le ZIP
+    if (fs.existsSync(SESSION_DIR)) {
+      fs.rmSync(SESSION_DIR, { recursive: true, force: true });
+      console.log('🗑️ Dossier de session supprimé');
+    }
+    
+    if (fs.existsSync(SESSION_ZIP)) {
+      fs.unlinkSync(SESSION_ZIP);
+      console.log('🗑️ ZIP de session supprimé');
     }
     
     isWhatsAppReady = false;
@@ -429,6 +477,13 @@ async function resetWhatsAppSession() {
     };
   }
 }
+
+// Sauvegarder la session périodiquement
+setInterval(() => {
+  if (isWhatsAppReady && client) {
+    saveSessionToZip();
+  }
+}, 300000); // Toutes les 5 minutes
 
 module.exports = {
   initializeWhatsApp,

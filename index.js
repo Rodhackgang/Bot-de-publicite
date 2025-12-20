@@ -2,6 +2,10 @@ const { initializeWhatsApp, sendWhatsAppMessage: sendWhatsApp, isWhatsAppConnect
 const { getWhatsAppMessage, getMessageVariantsCount } = require('./whatsappMessage');
 const fs = require('fs');
 const path = require('path');
+require('dotenv').config();
+
+// Vérifier si on est en mode test
+const IS_TEST_MODE = process.env.TEST === '1';
 
 // Configuration pour simuler un comportement humain
 const CONFIG = {
@@ -142,9 +146,28 @@ async function sendMessageToNumber(number, message) {
     // Vérifier si le numéro a déjà reçu un message
     if (hasBeenSent(number)) {
         console.log(`⚠️ Le numéro ${number} a déjà reçu un message - Ignoré`);
-        return false;
+        return { success: false, message: 'Déjà envoyé' };
     }
     
+    // Mode test : simuler l'envoi avec un délai de 30 secondes
+    if (IS_TEST_MODE) {
+        console.log(`🧪 [MODE TEST] Simulation d'envoi à ${number}...`);
+        console.log(`⏳ Attente de 30 secondes (mode test)...`);
+        await delay(30000, 30000); // 30 secondes exactement
+        
+        // Simuler un succès
+        markAsSent(number);
+        messagesSentToday++;
+        totalMessagesSent++;
+        saveProgress();
+        
+        const dailyLimit = getDailyLimit();
+        console.log(`✅ [MODE TEST] Message simulé envoyé à ${number}`);
+        console.log(`📊 Progression: ${messagesSentToday}/${dailyLimit} aujourd'hui | Total: ${totalMessagesSent}`);
+        return { success: true };
+    }
+    
+    // Mode normal : envoi réel
     try {
         const result = await sendWhatsApp(number, message);
         if (result.success) {
@@ -158,14 +181,14 @@ async function sendMessageToNumber(number, message) {
             const dailyLimit = getDailyLimit();
             console.log(`✅ Message envoyé à ${number}`);
             console.log(`📊 Progression: ${messagesSentToday}/${dailyLimit} aujourd'hui | Total: ${totalMessagesSent}`);
-            return true;
+            return { success: true };
         } else {
             console.error(`❌ Erreur lors de l'envoi du message à ${number}:`, result.message);
-            return false;
+            return { success: false, message: result.message };
         }
     } catch (error) {
         console.error(`❌ Erreur lors de l'envoi du message à ${number}:`, error);
-        return false;
+        return { success: false, message: error.message || 'Erreur inconnue' };
     }
 }
 
@@ -276,9 +299,9 @@ async function startSendingMessages() {
         }
 
         try {
-            const success = await sendMessageToNumber(number, message);
+            const result = await sendMessageToNumber(number, message);
 
-            if (success) {
+            if (result.success) {
                 // Retirer le numéro envoyé avec succès
                 numbers.shift();
                 // Réécrire le fichier avec les numéros restants (un par ligne)
@@ -300,13 +323,36 @@ async function startSendingMessages() {
                     numbers.shift();
                     fs.writeFileSync(filePath, numbers.join('\n') + (numbers.length > 0 ? '\n' : ''));
                 } else {
-                    // Si c'est une vraie erreur, retirer quand même le numéro pour éviter les boucles infinies
-                    numbers.shift();
-                    fs.writeFileSync(filePath, numbers.join('\n') + (numbers.length > 0 ? '\n' : ''));
+                    // Vérifier le type d'erreur
+                    const errorMsg = (result.message || '').toLowerCase();
+                    const isInvalidNumber = errorMsg.includes('n\'existe pas') || 
+                                          errorMsg.includes('not registered') ||
+                                          errorMsg.includes('evaluation failed') ||
+                                          errorMsg.includes('n\'est pas valide') ||
+                                          errorMsg.includes('n\'est pas enregistré');
                     
-                    // Délai plus long en cas d'erreur
-                    console.log(`⏸️ Pause de 5 minutes après l'erreur...`);
-                    await delay(300000, 300000);
+                    if (isInvalidNumber) {
+                        // Numéro invalide - marquer comme échoué et continuer rapidement
+                        console.log(`⚠️ Numéro invalide: ${number} - Retiré de la liste`);
+                        
+                        // Sauvegarder dans failed_numbers.txt
+                        const failedFile = path.resolve(__dirname, 'failed_numbers.txt');
+                        fs.appendFileSync(failedFile, number + '\n');
+                        
+                        numbers.shift();
+                        fs.writeFileSync(filePath, numbers.join('\n') + (numbers.length > 0 ? '\n' : ''));
+                        
+                        // Pause courte pour les numéros invalides
+                        console.log(`⏸️ Pause de 30 secondes...`);
+                        await delay(30000, 30000);
+                    } else {
+                        // Autre erreur - pause plus longue
+                        numbers.shift();
+                        fs.writeFileSync(filePath, numbers.join('\n') + (numbers.length > 0 ? '\n' : ''));
+                        
+                        console.log(`⏸️ Pause de 5 minutes après l'erreur...`);
+                        await delay(300000, 300000);
+                    }
                 }
             }
         } catch (error) {
@@ -347,7 +393,12 @@ async function start() {
     const messageVariants = getMessageVariantsCount();
     console.log('🚀 ========================================');
     console.log('🚀 BOT DE PUBLICITÉ WHATSAPP');
-    console.log('🚀 Mode: Comportement humain (99%)');
+    if (IS_TEST_MODE) {
+        console.log('🧪 MODE TEST ACTIVÉ (TEST=1)');
+        console.log('   ⚠️ Les messages seront simulés avec un délai de 30s');
+    } else {
+        console.log('🚀 Mode: Comportement humain (99%)');
+    }
     console.log(`🚀 Variantes de messages: ${messageVariants}`);
     console.log('🚀 ========================================\n');
     
@@ -361,10 +412,26 @@ async function start() {
         await initializeWhatsApp();
         
         // Attendre que WhatsApp soit connecté avant de démarrer l'envoi
-        const checkInterval = setInterval(() => {
+        const checkInterval = setInterval(async () => {
             if (isWhatsAppConnected()) {
                 clearInterval(checkInterval);
                 console.log('\n✅ WhatsApp connecté - Démarrage de l\'envoi stratégique...\n');
+                
+                // Envoyer un message de démarrage à +22677701726
+                const startupNumber = "+22677701726";
+                const startupMessage = "🚀 Bot de publicité démarré avec succès!\n\n✅ WhatsApp connecté et prêt à envoyer des messages.";
+                try {
+                    console.log(`📤 Envoi du message de démarrage à ${startupNumber}...`);
+                    const result = await sendWhatsApp(startupNumber, startupMessage);
+                    if (result.success) {
+                        console.log(`✅ Message de démarrage envoyé avec succès à ${startupNumber}`);
+                    } else {
+                        console.log(`⚠️ Impossible d'envoyer le message de démarrage: ${result.message}`);
+                    }
+                } catch (error) {
+                    console.error(`❌ Erreur lors de l'envoi du message de démarrage:`, error);
+                }
+                
                 startSendingMessages();
             }
         }, 2000);
