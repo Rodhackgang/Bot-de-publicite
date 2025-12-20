@@ -13,8 +13,6 @@ const CONFIG = {
     pauseAfterMessages: { count: 15, duration: { min: 1800000, max: 7200000 } }, // 30 min - 2h après 15 messages
     // Heures de travail (8h-22h seulement)
     workingHours: { start: 8, end: 22 },
-    // Pause nocturne (22h-8h)
-    nightPause: { start: 22, end: 8 },
     // Fichier de progression
     progressFile: path.resolve(__dirname, 'progress.json'),
     // Fichier des numéros déjà envoyés
@@ -171,29 +169,10 @@ async function sendMessageToNumber(number, message) {
     }
 }
 
-// Fonction pour attendre les heures de travail
+// Fonction pour attendre les heures de travail (désactivée - fonctionne 24/7)
 async function waitForWorkingHours() {
-    while (!isWorkingHours()) {
-        const hour = getCurrentHour();
-        const { start } = CONFIG.workingHours;
-        const nextStart = new Date();
-        nextStart.setHours(start, 0, 0, 0);
-        
-        // Si on est après minuit mais avant l'heure de début
-        if (hour < start) {
-            const waitTime = nextStart.getTime() - Date.now();
-            const waitHours = Math.ceil(waitTime / (1000 * 60 * 60));
-            console.log(`🌙 Pause nocturne - Reprise à ${start}h00 (dans ${waitHours}h)`);
-            await delay(waitTime, waitTime);
-        } else {
-            // Si on est après l'heure de fin, attendre jusqu'au lendemain
-            nextStart.setDate(nextStart.getDate() + 1);
-            const waitTime = nextStart.getTime() - Date.now();
-            const waitHours = Math.ceil(waitTime / (1000 * 60 * 60));
-            console.log(`🌙 Pause nocturne - Reprise demain à ${start}h00 (dans ${waitHours}h)`);
-            await delay(waitTime, waitTime);
-        }
-    }
+    // Pause nocturne désactivée - le bot fonctionne 24/7
+    return;
 }
 
 // Fonction pour démarrer l'envoi des messages depuis le fichier result.txt
@@ -257,26 +236,16 @@ async function startSendingMessages() {
         // Vérifier si on a atteint la limite quotidienne
         if (messagesSentToday >= dailyLimit) {
             console.log(`\n⏸️ Limite quotidienne atteinte (${messagesSentToday}/${dailyLimit})`);
-            console.log(`🌙 Pause jusqu'à demain...\n`);
+            console.log(`⏳ Réinitialisation pour continuer...\n`);
             
-            // Réinitialiser pour demain
+            // Réinitialiser pour le nouveau jour
             messagesSentToday = 0;
             lastResetDate = new Date().toDateString();
             saveProgress();
             
-            // Attendre jusqu'à demain 8h
-            await waitForWorkingHours();
-            
             // Nouvelle limite pour le nouveau jour
             const newDailyLimit = getDailyLimit();
             console.log(`\n📅 Nouveau jour - Nouvelle limite: ${newDailyLimit} messages\n`);
-            continue;
-        }
-
-        // Vérifier les heures de travail
-        if (!isWorkingHours()) {
-            console.log(`\n🌙 En dehors des heures de travail (${getCurrentHour()}h)`);
-            await waitForWorkingHours();
             continue;
         }
 
