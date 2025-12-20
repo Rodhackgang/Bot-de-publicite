@@ -8,8 +8,8 @@ const TelegramBot = require('node-telegram-bot-api');
 require('dotenv').config();
 
 // Configuration GREEN-API
-const GREEN_API_ID_INSTANCE = process.env.GREEN_API_ID_INSTANCE || '';
-const GREEN_API_TOKEN = process.env.GREEN_API_TOKEN_INSTANCE || '';
+const GREEN_API_ID_INSTANCE = process.env.GREEN_API_ID_INSTANCE || '7105432720';
+const GREEN_API_TOKEN = process.env.GREEN_API_TOKEN_INSTANCE || '7600ed59e74045398f18cb312ce58fa071bcae6a480440b4ac';
 // Construire l'URL de l'API: https://{4 premiers chiffres}.api.greenapi.com
 const GREEN_API_BASE_NUMBER = GREEN_API_ID_INSTANCE.toString().slice(0, 4);
 const GREEN_API_URL = process.env.GREEN_API_URL || `https://${GREEN_API_BASE_NUMBER}.api.greenapi.com`;
