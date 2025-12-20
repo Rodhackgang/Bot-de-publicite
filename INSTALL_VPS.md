@@ -10,6 +10,7 @@ sudo apt-get upgrade -y
 ```bash
 sudo apt-get install -y \
   wget \
+  
   curl \
   gnupg \
   ca-certificates \
